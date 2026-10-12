@@ -43,10 +43,26 @@
 
         #taskInput {
             flex: 1;
+            min-width: 0;
             padding: 12px;
             border: 1px solid #ccc;
             border-radius: 8px;
             outline: none;
+        }
+
+        #minutesInput {
+            width: 70px;
+            padding: 12px 8px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            outline: none;
+            text-align: center;
+        }
+
+        .hint {
+            font-size: 12px;
+            color: #777;
+            margin-top: 6px;
         }
 
         button {
@@ -69,6 +85,7 @@
 
         li {
             display: flex;
+            flex-wrap: wrap;
             justify-content: space-between;
             align-items: center;
             background: #f8f9fa;
@@ -77,12 +94,12 @@
             border-radius: 8px;
         }
 
-        li.completed span {
+        li.completed .task-text {
             text-decoration: line-through;
             color: gray;
         }
 
-        li span {
+        .task-text {
             cursor: pointer;
             flex: 1;
         }
@@ -95,6 +112,44 @@
 
         .delete-btn:hover {
             background: #a71d2a;
+        }
+
+        .timer-row {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .time-display {
+            font-size: 20px;
+            font-weight: bold;
+            font-variant-numeric: tabular-nums;
+            color: #333;
+            min-width: 70px;
+        }
+
+        .time-display.done {
+            color: #dc3545;
+            animation: blink 0.8s infinite;
+        }
+
+        @keyframes blink {
+            50% { opacity: 0.3; }
+        }
+
+        .timer-btn {
+            padding: 6px 12px;
+            font-size: 13px;
+        }
+
+        .reset-btn {
+            background: #6c757d;
+        }
+
+        .reset-btn:hover {
+            background: #545b62;
         }
     </style>
 </head>
@@ -112,8 +167,18 @@
                 placeholder="Enter your task..."
             >
 
+            <input
+                type="number"
+                id="minutesInput"
+                min="0"
+                max="999"
+                value="25"
+                title="Timer in minutes"
+            >
+
             <button onclick="addTask()">Add</button>
         </div>
+        <p class="hint">Timer in minutes (leave 0 or empty for no timer)</p>
 
         <ul id="taskList"></ul>
 
@@ -121,10 +186,124 @@
 
     <script>
 
+        function formatTime(totalSeconds) {
+            const m = Math.floor(totalSeconds / 60);
+            const s = totalSeconds % 60;
+            return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+        }
+
+        let audioCtx = null;
+
+        // Must be called from a tap/click so the browser allows sound later
+        function unlockAudio() {
+            try {
+                if (!audioCtx) {
+                    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                if (audioCtx.state === "suspended") {
+                    audioCtx.resume();
+                }
+            } catch (e) {}
+        }
+
+        function beep() {
+            try {
+                unlockAudio();
+                const ctx = audioCtx;
+                for (let i = 0; i < 6; i++) {
+                    const osc = ctx.createOscillator();
+                    const gain = ctx.createGain();
+                    osc.type = "square";
+                    osc.connect(gain);
+                    gain.connect(ctx.destination);
+                    osc.frequency.value = i % 2 === 0 ? 880 : 660;
+                    gain.gain.value = 0.5;
+                    const start = ctx.currentTime + i * 0.35;
+                    osc.start(start);
+                    osc.stop(start + 0.25);
+                }
+            } catch (e) {}
+            if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 300]);
+        }
+
+        function createTimer(li, minutes) {
+            const total = minutes * 60;
+            let remaining = total;
+            let interval = null;
+            let endTime = 0;
+
+            const row = document.createElement("div");
+            row.className = "timer-row";
+
+            const display = document.createElement("div");
+            display.className = "time-display";
+            display.textContent = formatTime(remaining);
+
+            const startBtn = document.createElement("button");
+            startBtn.className = "timer-btn";
+            startBtn.textContent = "Start";
+
+            const resetBtn = document.createElement("button");
+            resetBtn.className = "timer-btn reset-btn";
+            resetBtn.textContent = "Reset";
+
+            function stop() {
+                clearInterval(interval);
+                interval = null;
+                startBtn.textContent = "Start";
+            }
+
+            function tick() {
+                remaining = Math.max(0, Math.round((endTime - Date.now()) / 1000));
+                display.textContent = formatTime(remaining);
+
+                if (remaining <= 0) {
+                    stop();
+                    display.classList.add("done");
+                    li.classList.add("completed");
+                    beep();
+                }
+            }
+
+            startBtn.onclick = function () {
+                unlockAudio();
+                if (interval) {
+                    stop(); // pause
+                    return;
+                }
+                if (remaining <= 0) {
+                    remaining = total;
+                    display.classList.remove("done");
+                    li.classList.remove("completed");
+                }
+                endTime = Date.now() + remaining * 1000;
+                interval = setInterval(tick, 250);
+                startBtn.textContent = "Pause";
+            };
+
+            resetBtn.onclick = function () {
+                stop();
+                remaining = total;
+                display.textContent = formatTime(remaining);
+                display.classList.remove("done");
+                li.classList.remove("completed");
+            };
+
+            row.appendChild(display);
+            row.appendChild(startBtn);
+            row.appendChild(resetBtn);
+            li.appendChild(row);
+
+            // Return a cleanup function used when the task is deleted
+            return stop;
+        }
+
         function addTask() {
 
             const input = document.getElementById("taskInput");
+            const minutesInput = document.getElementById("minutesInput");
             const taskText = input.value.trim();
+            const minutes = parseInt(minutesInput.value, 10) || 0;
 
             if (taskText === "") {
                 alert("Please enter a task!");
@@ -134,6 +313,7 @@
             const li = document.createElement("li");
 
             const span = document.createElement("span");
+            span.className = "task-text";
             span.textContent = taskText;
 
             // Mark task as completed
@@ -146,12 +326,18 @@
             deleteButton.textContent = "Delete";
             deleteButton.className = "delete-btn";
 
-            deleteButton.onclick = function () {
-                li.remove();
-            };
-
             li.appendChild(span);
             li.appendChild(deleteButton);
+
+            let stopTimer = null;
+            if (minutes > 0) {
+                stopTimer = createTimer(li, minutes);
+            }
+
+            deleteButton.onclick = function () {
+                if (stopTimer) stopTimer();
+                li.remove();
+            };
 
             document.getElementById("taskList").appendChild(li);
 
